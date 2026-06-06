@@ -5,23 +5,65 @@ const cron = require('node-cron');
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
 const GOOGLE_PLACES_API_KEY = process.env.GOOGLE_PLACES_API_KEY;
 const SPREADSHEET_ID = '1_j7ZR95Q6sChI95R_HJ2WZ-l_jhc8IcPvWGt7zIiZog';
-const MAX_PER_DAY = 20;
+const MAX_PER_DAY = 5;
 
-const CITIES = [
-  // Punjab
-  'Ludhiana', 'Amritsar', 'Jalandhar', 'Patiala', 'Bathinda', 'Mohali', 'Phagwara',
-  // Haryana
-  'Gurugram', 'Faridabad', 'Panipat', 'Ambala', 'Karnal', 'Hisar', 'Rohtak',
-  // Gujarat
-  'Ahmedabad', 'Surat', 'Vadodara', 'Rajkot', 'Gandhinagar', 'Bhavnagar', 'Jamnagar',
-  // Maharashtra
-  'Mumbai', 'Pune', 'Nagpur', 'Nashik', 'Aurangabad', 'Solapur', 'Kolhapur',
-  // Madhya Pradesh
-  'Bhopal', 'Indore', 'Gwalior', 'Jabalpur', 'Ujjain', 'Sagar', 'Dewas',
-  // South India
-  'Bengaluru', 'Chennai', 'Hyderabad', 'Kochi', 'Thiruvananthapuram', 'Mysuru',
-  'Coimbatore', 'Madurai', 'Vijayawada', 'Visakhapatnam', 'Mangaluru', 'Kozhikode',
-  'Tirupati', 'Warangal', 'Hubli'
+// Each entry: { state, sheetName, cities }
+const STATES = [
+  {
+    state: 'Punjab',
+    sheetName: 'Leads Punjab',
+    cities: ['Ludhiana', 'Amritsar', 'Jalandhar', 'Patiala', 'Bathinda', 'Mohali']
+  },
+  {
+    state: 'Haryana',
+    sheetName: 'Leads Haryana',
+    cities: ['Gurugram', 'Faridabad', 'Panipat', 'Ambala', 'Karnal', 'Hisar', 'Rohtak']
+  },
+  {
+    state: 'Gujarat',
+    sheetName: 'Leads Gujarat',
+    cities: ['Ahmedabad', 'Surat', 'Vadodara', 'Rajkot', 'Gandhinagar', 'Bhavnagar']
+  },
+  {
+    state: 'Maharashtra',
+    sheetName: 'Leads Maharastra',
+    cities: ['Mumbai', 'Pune', 'Nagpur', 'Nashik', 'Aurangabad', 'Solapur', 'Kolhapur']
+  },
+  {
+    state: 'Madhya Pradesh',
+    sheetName: 'Leads MP',
+    cities: ['Bhopal', 'Indore', 'Gwalior', 'Jabalpur', 'Ujjain', 'Sagar']
+  },
+  {
+    state: 'Kerala',
+    sheetName: 'Leads Kerala',
+    cities: ['Kochi', 'Thiruvananthapuram', 'Kozhikode', 'Thrissur', 'Kollam', 'Kannur']
+  },
+  {
+    state: 'Tamil Nadu',
+    sheetName: 'Leads Chennai',
+    cities: ['Chennai', 'Coimbatore', 'Madurai', 'Tiruchirappalli', 'Salem', 'Tiruppur']
+  },
+  {
+    state: 'West Bengal',
+    sheetName: 'Leads West Bengal',
+    cities: ['Kolkata', 'Howrah', 'Durgapur', 'Asansol', 'Siliguri', 'Bardhaman']
+  },
+  {
+    state: 'Karnataka',
+    sheetName: 'Leads Karnataka',
+    cities: ['Bengaluru', 'Mysuru', 'Mangaluru', 'Hubli', 'Belagavi', 'Davangere']
+  },
+  {
+    state: 'Andhra Pradesh',
+    sheetName: 'Leads Andhra',
+    cities: ['Vijayawada', 'Visakhapatnam', 'Tirupati', 'Guntur', 'Nellore', 'Kurnool']
+  },
+  {
+    state: 'Telangana',
+    sheetName: 'Leads Telangana',
+    cities: ['Hyderabad', 'Warangal', 'Nizamabad', 'Karimnagar', 'Khammam']
+  }
 ];
 
 // ─── GOOGLE SHEETS AUTH ───────────────────────────────────────────────────────
@@ -42,46 +84,13 @@ async function ensureSheetExists(sheets, sheetName) {
     if (!exists) {
       await sheets.spreadsheets.batchUpdate({
         spreadsheetId: SPREADSHEET_ID,
-        requestBody: {
-          requests: [{ addSheet: { properties: { title: sheetName } } }]
-        }
+        requestBody: { requests: [{ addSheet: { properties: { title: sheetName } } }] }
       });
       console.log(`Created sheet: ${sheetName}`);
     }
   } catch (e) {
     console.error('ensureSheetExists error:', e.message);
   }
-}
-
-async function getMonthlySheetName() {
-  const now = new Date();
-  const month = now.toLocaleString('en-IN', { month: 'long' });
-  const year = now.getFullYear();
-  return `${month} ${year}`;
-}
-
-async function readMasterSheet(sheets) {
-  try {
-    const res = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_ID,
-      range: 'master!A:B',
-    });
-    return res.data.values || [];
-  } catch (e) {
-    console.log('Master sheet empty or not found, starting fresh');
-    return [];
-  }
-}
-
-async function appendToSheet(sheets, sheetName, rows) {
-  if (!rows.length) return;
-  await sheets.spreadsheets.values.append({
-    spreadsheetId: SPREADSHEET_ID,
-    range: `${sheetName}!A1`,
-    valueInputOption: 'RAW',
-    insertDataOption: 'INSERT_ROWS',
-    requestBody: { values: rows },
-  });
 }
 
 async function ensureHeaders(sheets, sheetName, headers) {
@@ -100,7 +109,6 @@ async function ensureHeaders(sheets, sheetName, headers) {
       });
     }
   } catch (e) {
-    // sheet might be empty, write headers
     await sheets.spreadsheets.values.update({
       spreadsheetId: SPREADSHEET_ID,
       range: `${sheetName}!A1`,
@@ -110,8 +118,31 @@ async function ensureHeaders(sheets, sheetName, headers) {
   }
 }
 
-// ─── CITY ROTATION ────────────────────────────────────────────────────────────
-async function getCityIndex(sheets) {
+async function readMasterSheet(sheets) {
+  try {
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID,
+      range: 'master!A:B',
+    });
+    return res.data.values || [];
+  } catch (e) {
+    return [];
+  }
+}
+
+async function appendToSheet(sheets, sheetName, rows) {
+  if (!rows.length) return;
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${sheetName}!A1`,
+    valueInputOption: 'RAW',
+    insertDataOption: 'INSERT_ROWS',
+    requestBody: { values: rows },
+  });
+}
+
+// ─── STATE ROTATION ───────────────────────────────────────────────────────────
+async function getStateIndex(sheets) {
   try {
     const res = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_ID,
@@ -124,14 +155,60 @@ async function getCityIndex(sheets) {
   }
 }
 
-async function saveCityIndex(sheets, index) {
+async function saveStateIndex(sheets, index) {
   await ensureSheetExists(sheets, 'config');
   await sheets.spreadsheets.values.update({
     spreadsheetId: SPREADSHEET_ID,
     range: 'config!A1',
     valueInputOption: 'RAW',
-    requestBody: { values: [['cityIndex'], [index]] },
+    requestBody: { values: [['stateIndex'], [index]] },
   });
+}
+
+// ─── CITY ROTATION WITHIN STATE ───────────────────────────────────────────────
+async function getCityIndex(sheets, stateName) {
+  try {
+    const key = `cityIndex_${stateName.replace(/\s/g, '_')}`;
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID,
+      range: 'config!C:D',
+    });
+    const rows = res.data.values || [];
+    const row = rows.find(r => r[0] === key);
+    return row ? (parseInt(row[1]) || 0) : 0;
+  } catch (e) {
+    return 0;
+  }
+}
+
+async function saveCityIndex(sheets, stateName, index) {
+  const key = `cityIndex_${stateName.replace(/\s/g, '_')}`;
+  try {
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID,
+      range: 'config!C:D',
+    });
+    const rows = res.data.values || [];
+    const rowIndex = rows.findIndex(r => r[0] === key);
+    if (rowIndex >= 0) {
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: SPREADSHEET_ID,
+        range: `config!D${rowIndex + 1}`,
+        valueInputOption: 'RAW',
+        requestBody: { values: [[index]] },
+      });
+    } else {
+      await sheets.spreadsheets.values.append({
+        spreadsheetId: SPREADSHEET_ID,
+        range: 'config!C:D',
+        valueInputOption: 'RAW',
+        insertDataOption: 'INSERT_ROWS',
+        requestBody: { values: [[key, index]] },
+      });
+    }
+  } catch (e) {
+    console.error('saveCityIndex error:', e.message);
+  }
 }
 
 // ─── PHONE NORMALIZER ─────────────────────────────────────────────────────────
@@ -151,11 +228,6 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function fetchPlacesPage(url) {
-  const res = await axios.get(url, { timeout: 30000 });
-  return res.data;
-}
-
 async function searchTravelAgents(city) {
   const query = encodeURIComponent(`travel agents in ${city}`);
   const baseUrl = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${query}&type=travel_agency&region=in&key=${GOOGLE_PLACES_API_KEY}`;
@@ -164,22 +236,20 @@ async function searchTravelAgents(city) {
   let url = baseUrl;
 
   for (let page = 1; page <= 3; page++) {
-    console.log(`  Fetching page ${page} for ${city}...`);
-    const data = await fetchPlacesPage(url);
+    console.log(`    Page ${page} for ${city}...`);
+    const res = await axios.get(url, { timeout: 30000 });
+    const data = res.data;
 
     if (data.status !== 'OK' && data.status !== 'ZERO_RESULTS') {
-      console.error(`  Places API error: ${data.status}`);
+      console.error(`    Places API error: ${data.status}`);
       break;
     }
 
-    const results = data.results || [];
-    for (const r of results) {
+    for (const r of (data.results || [])) {
       if (r.place_id) placeIds.push({ place_id: r.place_id, city });
     }
 
     if (!data.next_page_token) break;
-
-    // Must wait 2 seconds before using next_page_token
     await sleep(2000);
     url = `https://maps.googleapis.com/maps/api/place/textsearch/json?pagetoken=${data.next_page_token}&key=${GOOGLE_PLACES_API_KEY}`;
   }
@@ -190,32 +260,30 @@ async function searchTravelAgents(city) {
 async function fetchPlaceDetails(placeId, city) {
   const url = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${placeId}&fields=name,formatted_address,formatted_phone_number,international_phone_number,url,place_id&key=${GOOGLE_PLACES_API_KEY}`;
   const res = await axios.get(url, { timeout: 30000 });
-  const r = res.data.result || {};
-  return { ...r, city };
+  return { ...(res.data.result || {}), city };
 }
 
 // ─── MAIN JOB ─────────────────────────────────────────────────────────────────
 async function runJob() {
-  console.log(`\n========== Travel Agent Cron Started: ${new Date().toISOString()} ==========`);
+  console.log(`\n========== Travel Agent Cron: ${new Date().toISOString()} ==========`);
 
   const sheets = getSheetsClient();
 
-  // Ensure sheets exist
+  // Ensure master + config sheets
   await ensureSheetExists(sheets, 'master');
-  await ensureSheetExists(sheets, 'Leads');
-  const monthlySheet = await getMonthlySheetName();
-  await ensureSheetExists(sheets, monthlySheet);
+  await ensureSheetExists(sheets, 'config');
+  await ensureHeaders(sheets, 'master', ['Phone', 'PlaceID', 'name', 'state']);
 
-  // Write headers if needed
-  await ensureHeaders(sheets, 'master', ['Phone', 'PlaceID', 'name']);
-  await ensureHeaders(sheets, 'Leads', ['date', 'city', 'name', 'phone', 'address', 'mapsUrl', 'place_id', 'dailyCount']);
-  await ensureHeaders(sheets, monthlySheet, ['date', 'city', 'name', 'phone', 'address', 'mapsUrl', 'place_id']);
+  // Get today's state
+  const stateIndex = await getStateIndex(sheets);
+  const stateObj = STATES[stateIndex % STATES.length];
+  const nextStateIndex = (stateIndex + 1) % STATES.length;
+  console.log(`State today: ${stateObj.state} → sheet: "${stateObj.sheetName}"`);
 
-  // Get current city
-  const cityIndex = await getCityIndex(sheets);
-  const city = CITIES[cityIndex % CITIES.length];
-  const nextIndex = (cityIndex + 1) % CITIES.length;
-  console.log(`City for today: ${city} (index ${cityIndex})`);
+  // Ensure state sheet exists with headers
+  await ensureSheetExists(sheets, stateObj.sheetName);
+  await ensureHeaders(sheets, stateObj.sheetName, ['date', 'city', 'name', 'phone', 'address', 'mapsUrl', 'place_id']);
+  await ensureHeaders(sheets, 'Leads', ['date', 'city', 'state', 'name', 'phone', 'address', 'mapsUrl', 'place_id']);
 
   // Read master for dedup
   const masterRows = await readMasterSheet(sheets);
@@ -225,74 +293,67 @@ async function runJob() {
     if (row[0]) seenPhones.add(String(row[0]).trim());
     if (row[1]) seenPlaceIds.add(String(row[1]).trim());
   }
-  console.log(`Master has ${seenPhones.size} existing phones, ${seenPlaceIds.size} place IDs`);
+  console.log(`Master: ${seenPhones.size} phones, ${seenPlaceIds.size} place IDs`);
 
-  // Search Google Places
+  // Get city to search today within this state
+  const cityIndex = await getCityIndex(sheets, stateObj.state);
+  const city = stateObj.cities[cityIndex % stateObj.cities.length];
+  const nextCityIndex = (cityIndex + 1) % stateObj.cities.length;
+  console.log(`City: ${city} (index ${cityIndex})`);
+
+  // Search Places
   const placeIds = await searchTravelAgents(city);
-  console.log(`Found ${placeIds.length} place IDs for ${city}`);
+  console.log(`Found ${placeIds.length} place IDs`);
 
-  // Fetch details and filter
+  // Fetch details, dedup, gate 20
   let dailyCount = 0;
+  const stateRows = [];
   const leadsRows = [];
-  const monthlyRows = [];
   const masterNewRows = [];
   const today = new Date().toISOString().slice(0, 10);
 
   for (const { place_id, city: c } of placeIds) {
     if (dailyCount >= MAX_PER_DAY) break;
-    if (seenPlaceIds.has(place_id)) {
-      console.log(`  Skip (dup place_id): ${place_id}`);
-      continue;
-    }
+    if (seenPlaceIds.has(place_id)) { console.log(`  Skip dup placeId: ${place_id}`); continue; }
 
     let details;
     try {
       details = await fetchPlaceDetails(place_id, c);
     } catch (e) {
-      console.error(`  Error fetching details for ${place_id}:`, e.message);
+      console.error(`  Error fetching ${place_id}:`, e.message);
       continue;
     }
 
     const phone = normalizePhone(details.international_phone_number || details.formatted_phone_number);
-    if (!phone) {
-      console.log(`  Skip (no valid phone): ${details.name}`);
-      continue;
-    }
-    if (seenPhones.has(phone)) {
-      console.log(`  Skip (dup phone): ${phone}`);
-      continue;
-    }
+    if (!phone) { console.log(`  Skip no phone: ${details.name}`); continue; }
+    if (seenPhones.has(phone)) { console.log(`  Skip dup phone: ${phone}`); continue; }
 
-    // New unique lead!
     dailyCount++;
     seenPhones.add(phone);
     seenPlaceIds.add(place_id);
 
     console.log(`  ✅ [${dailyCount}] ${details.name} | ${phone} | ${c}`);
 
-    const leadRow = [today, c, details.name || '', phone, details.formatted_address || '', details.url || '', place_id, dailyCount];
-    const monthlyRow = [today, c, details.name || '', phone, details.formatted_address || '', details.url || '', place_id];
-    const masterRow = [phone, place_id, details.name || ''];
-
-    leadsRows.push(leadRow);
-    monthlyRows.push(monthlyRow);
-    masterNewRows.push(masterRow);
+    stateRows.push([today, c, details.name || '', phone, details.formatted_address || '', details.url || '', place_id]);
+    leadsRows.push([today, c, stateObj.state, details.name || '', phone, details.formatted_address || '', details.url || '', place_id]);
+    masterNewRows.push([phone, place_id, details.name || '', stateObj.state]);
   }
 
-  // Append to sheets
-  if (leadsRows.length) {
+  // Write to sheets
+  if (stateRows.length) {
+    await appendToSheet(sheets, stateObj.sheetName, stateRows);
     await appendToSheet(sheets, 'Leads', leadsRows);
-    await appendToSheet(sheets, monthlySheet, monthlyRows);
     await appendToSheet(sheets, 'master', masterNewRows);
-    console.log(`\n✅ Appended ${leadsRows.length} new leads to Leads, ${monthlySheet}, and master`);
+    console.log(`\n✅ Added ${stateRows.length} leads to "${stateObj.sheetName}" and Leads`);
   } else {
-    console.log('\n⚠️ No new leads found for today');
+    console.log('\n⚠️ No new leads found');
   }
 
-  // Advance city index
-  await saveCityIndex(sheets, nextIndex);
-  console.log(`Next city index saved: ${nextIndex} (${CITIES[nextIndex]})`);
-  console.log(`========== Job Complete ==========\n`);
+  // Advance indexes
+  await saveStateIndex(sheets, nextStateIndex);
+  await saveCityIndex(sheets, stateObj.state, nextCityIndex);
+  console.log(`Next state: ${STATES[nextStateIndex].state}, next city in ${stateObj.state}: ${stateObj.cities[nextCityIndex]}`);
+  console.log(`========== Done ==========\n`);
 }
 
 // ─── SCHEDULE: 7PM IST = 13:30 UTC ───────────────────────────────────────────
@@ -300,9 +361,8 @@ cron.schedule('30 13 * * *', () => {
   runJob().catch(err => console.error('Job failed:', err));
 });
 
-console.log('✅ Travel Agent Cron Service started. Runs daily at 7PM IST.');
+console.log('✅ Travel Agent Cron started. Runs daily at 7PM IST.');
 
-// Run immediately on start if env var set (for testing)
 if (process.env.RUN_NOW === 'true') {
   runJob().catch(err => console.error('Job failed:', err));
 }
